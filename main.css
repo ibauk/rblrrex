@@ -1,5 +1,5 @@
 :root   {
-    --regular-background		: #ccffcc;
+    --regular-background		: #b3ecff;
     --regular-text				: black;
     --altered-background        : #ffff00;
     --accepted-background       : #339966;
@@ -55,12 +55,28 @@ select  {
 }
 
 .td.EntrantID {
-    width: 30px;
+    width: 3em;
 }
 .td.RiderName {
-    width: 160px;
+    width: 20em;
 }
 
+
+body, input, select		{ 
+    font-family: Verdana, Arial, Helvetica, sans-serif; 
+    font-size: calc(18pt + 1vmin);  
+    background-color: var(--regular-background) 
+}
+
+
+.topbar     {
+    background-color: var(--header-background);
+    position: sticky;
+    top: 0;
+    height: 3em;
+    display: block;
+    width: 100%;
+}
 .topline    {
     display: block;
     width: 50em;
@@ -72,8 +88,22 @@ select  {
     padding: 5px;
     margin-bottom: 10px;
     border-bottom: solid thin;
+    font-size: .9em;
 }
 
+.blspacer   {
+    margin-left: 5em;
+}
+
+.timeonly   {
+    display: inline-block;
+    width: 5em;
+}
+.functionlabel  {
+    display: inline-block;
+    padding: 1em 0 0 5em;
+    text-align: center;
+}
 .oi     {
     background-color: var(--altered-background);
 }

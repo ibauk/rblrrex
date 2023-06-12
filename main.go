@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"text/template"
+	"time"
 
 	_ "embed"
 
@@ -17,6 +19,7 @@ import (
 const apptitle = "RBLRRex v0.1"
 
 var path2db = flag.String("db", `\sm-installs\rblr23\rex.db`, "Path to database")
+var httpPort = flag.String("port", "8079", "Serve on this port")
 
 const baseConfig = `
 StartSlotIntervalMins: 10
@@ -40,7 +43,7 @@ func main() {
 	fmt.Println(baseConfig)
 
 	http.HandleFunc("/", show_odos)
-	err = http.ListenAndServe("127.0.0.1:8079", nil)
+	err = http.ListenAndServe(":"+*httpPort, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -49,7 +52,7 @@ func main() {
 
 func show_odos(w http.ResponseWriter, r *http.Request) {
 
-	var odoParams struct {
+	type odoParamsVar struct {
 		EntrantID      int
 		RiderFirst     string
 		RiderLast      string
@@ -59,8 +62,11 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		OdoKms         bool
 		Started        bool
 		StartTime      string
+		StartTimeISO   string
 		Finished       bool
 		FinishTime     string
+		FinishTimeISO  string
+		HoursMins      string
 	}
 	const odoline = `
 	<div class="odoline">
@@ -82,12 +88,22 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		</div>
 		
 		<div class="bottomline">
+		<span class="blspacer"> </span>
+		<span class="td timeonly" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}} - {{end}}</span>
+		<span class="td timeonly" data-time="{{.FinishTimeISO}}">{{if .Finished}}{{.FinishTime}} = {{end}}</span>
+		<span class="td timeonly">{{if .Finished}}{{.HoursMins}}{{end}}</span>
 		<span class="td">{{if .Finished}}Odo miles: {{end}}<span class="OdoMiles">{{if .Finished}}{{.OdoMiles}}{{end}}</span>
-		<span class="td">{{if .Started}}Start: {{.StartTime}}{{end}}</span>
-		<span class="td">{{if .Finished}}Finish: {{.FinishTime}}{{end}}</span>
 		</div>
 	</div>
 	`
+	var cohdr = `
+	<div class="topbar">
+	<span class="functionlabel">CHECK-OUT/START </span>
+	<span class="clock">
+	</span>
+	</div>
+	`
+
 	sqlx := "SELECT trim(substr(RiderName,1,RiderPos-1)) AS RiderFirst"
 	sqlx += ",trim(substr(RiderName,RiderPos+1)) AS RiderLast"
 	sqlx += ",EntrantID,ifnull(OdoRallyStart,0),ifnull(OdoRallyFinish,0),OdoKms"
@@ -104,6 +120,7 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	start_html(w, r)
+	fmt.Fprint(w, cohdr)
 	fmt.Fprint(w, `<div class="table">`)
 
 	const validEntrantStatus = 8
@@ -111,19 +128,21 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 
 	var start, finish, odokms, EntrantStatus int
 	for rows.Next() {
-		rows.Scan(&odoParams.RiderFirst, &odoParams.RiderLast, &odoParams.EntrantID, &start, &finish, &odokms, &odoParams.StartTime, &EntrantStatus, &odoParams.FinishTime)
+		var odoParams odoParamsVar
+		rows.Scan(&odoParams.RiderFirst, &odoParams.RiderLast, &odoParams.EntrantID, &start, &finish, &odokms, &odoParams.StartTimeISO, &EntrantStatus, &odoParams.FinishTimeISO)
 		if EntrantStatus != validEntrantStatus {
 			continue
 		}
 		odoParams.OdoKms = odokms == 1
-		odoParams.OdoRallyStart = ""
-		odoParams.OdoRallyFinish = ""
-		odoParams.Started = false
-		odoParams.Finished = false
-		odoParams.OdoMiles = 0
 		if start > 0 {
 			odoParams.OdoRallyStart = strconv.Itoa(start)
-			odoParams.Started = odoParams.StartTime != ""
+			odoParams.Started = odoParams.StartTimeISO != ""
+			if odoParams.Started {
+				dt := strings.Split(odoParams.StartTimeISO, "T")
+				if len(dt) > 1 {
+					odoParams.StartTime = dt[1]
+				}
+			}
 		}
 		if finish > 0 {
 			odoParams.OdoRallyFinish = strconv.Itoa(finish)
@@ -131,6 +150,18 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 			odoParams.OdoMiles = finish - start
 			if odoParams.OdoKms {
 				odoParams.OdoMiles = int(float64(odoParams.OdoMiles) / K2M)
+			}
+			dt := strings.Split(odoParams.FinishTimeISO, "T")
+			if len(dt) > 1 {
+				odoParams.FinishTime = dt[1]
+				dtStart, _ := time.Parse("2006-01-02T15:04", odoParams.StartTimeISO)
+				dtFinish, _ := time.Parse("2006-01-02T15:04", odoParams.FinishTimeISO)
+				diff := dtFinish.Sub(dtStart)
+				minutes := int(diff.Minutes())
+				hours := int(minutes / 60)
+				minutes = minutes - (hours * 60)
+				odoParams.HoursMins = fmt.Sprintf("%02dh%02d", hours, minutes)
+
 			}
 		}
 
@@ -166,7 +197,7 @@ func start_html(w http.ResponseWriter, r *http.Request) {
 	</style>
 	<script>` + js_main + `</script>
 	</head>
-	<body>
-	`
+	<body>`
+
 	fmt.Fprint(w, shtml)
 }
