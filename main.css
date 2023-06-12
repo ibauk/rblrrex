@@ -1,0 +1,79 @@
+:root   {
+    --regular-background		: #ccffcc;
+    --regular-text				: black;
+    --altered-background        : #ffff00;
+    --accepted-background       : #339966;
+    --button-background			: #006600;
+    --button-text				: white;
+    --button-back-disabled		: #339966;
+    --button-text-disabled		: lightgray;
+    --bright-background			: #ffff00;
+    --bright-text				: red;
+    --form-background			: #ccffcc;
+    --input-text				: #000;
+    --input-background			: inherited;
+    --hover-background			: lightgray;
+    --hover-text				: black;
+    --tabs-background			: #dedbde;
+    --tabs-text					: #42454a;
+    --via-background			: white;
+    --via-text					: black;
+    --solid-border				: #c9c3ba;
+    --header-background			: lightgray;
+    --scorex-background			: #66D2FF;
+    --rejected-background 		: red;
+    --rejected-text 			: white;
+    --checked-background 		: #31ad16;
+    --checked-text 				: white;
+    --error-background			: red;
+    --error-text 				: white;
+
+}
+.EntrantID  { 
+    text-align: right; 
+    padding-right: .5em;
+}
+
+.bignumber    {
+    width: 5em;
+}
+
+
+input   {
+    border: none;
+}
+
+select  {
+    border: none;
+}
+
+.table  {
+    display: table;
+}
+.td {
+    display: inline-block;
+}
+
+.td.EntrantID {
+    width: 30px;
+}
+.td.RiderName {
+    width: 160px;
+}
+
+.topline    {
+    display: block;
+    width: 50em;
+    padding: 5px;
+}
+.bottomline     {
+    display: block;
+    width: 50em;
+    padding: 5px;
+    margin-bottom: 10px;
+    border-bottom: solid thin;
+}
+
+.oi     {
+    background-color: var(--altered-background);
+}
