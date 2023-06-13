@@ -48,10 +48,11 @@ select  {
 }
 
 .table  {
-    display: table;
+    display: block;
 }
 .td {
     display: inline-block;
+    padding: 0 0 0 .5em;
 }
 
 .td.EntrantID {
@@ -68,7 +69,11 @@ body, input, select		{
     background-color: var(--regular-background) 
 }
 
-
+header  {
+    margin-left: auto;
+    margin-right: auto;
+    width: 30em;
+}
 .topbar     {
     background-color: var(--header-background);
     position: sticky;
@@ -77,14 +82,19 @@ body, input, select		{
     display: block;
     width: 100%;
 }
+.odoline    {
+    display: table;
+    margin-left: auto;
+    margin-right: auto;
+}
 .topline    {
     display: block;
-    width: 50em;
+    width: 100%;
     padding: 5px;
 }
 .bottomline     {
     display: block;
-    width: 50em;
+    width: 100%;
     padding: 5px;
     margin-bottom: 10px;
     border-bottom: solid thin;
@@ -106,4 +116,12 @@ body, input, select		{
 }
 .oi     {
     background-color: var(--altered-background);
+}
+
+.smalltime  {
+    font-size: smaller;
+}
+
+.hide   {
+    display: none;
 }

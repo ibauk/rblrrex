@@ -71,7 +71,7 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 	const odoline = `
 	<div class="odoline">
 		<div class="topline">
-			<span class="td EntrantID">{{.EntrantID}}</span>
+			<span class="td EntrantID hide">{{.EntrantID}}</span>
 			<span class="td RiderName"><strong>{{.RiderLast}}</strong>, {{.RiderFirst}}</span>
 			<span class="td odo">
 				<input type="number" class="bignumber OdoRallyStart" placeholder="start" value="{{.OdoRallyStart}}" oninput="oi(this);" onchange="oc(this);">
@@ -89,7 +89,7 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		
 		<div class="bottomline">
 		<span class="blspacer"> </span>
-		<span class="td timeonly" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}} - {{end}}</span>
+		<span class="td timeonly" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}} &#8594; {{end}}</span>
 		<span class="td timeonly" data-time="{{.FinishTimeISO}}">{{if .Finished}}{{.FinishTime}} = {{end}}</span>
 		<span class="td timeonly">{{if .Finished}}{{.HoursMins}}{{end}}</span>
 		<span class="td">{{if .Finished}}Odo miles: {{end}}<span class="OdoMiles">{{if .Finished}}{{.OdoMiles}}{{end}}</span>
@@ -98,9 +98,20 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 	`
 	var cohdr = `
 	<div class="topbar">
+	<header>
 	<span class="functionlabel">CHECK-OUT/START </span>
-	<span class="clock">
+	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+	<span class="starttime">
+		<select id="starttime" class="st">
+			<option value="2023-06-13T05:00" selected>05:00</option>
+			<option value="2023-06-13T05:10">05:10</option>
+		</select>
 	</span>
+	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+	<span id="timenow" class="smalltime" data-time="" data-refresh="1000" data-pause="120000" data-paused="0" onclick="clickTime();">
+
+	</span>
+	</header>
 	</div>
 	`
 
@@ -173,6 +184,7 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprint(w, `</div>`)
+	fmt.Fprint(w, `<script>refreshTime(); timertick = setInterval(refreshTime,1000);</script>`)
 
 }
 
