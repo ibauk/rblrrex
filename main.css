@@ -59,13 +59,13 @@ select  {
     width: 3em;
 }
 .td.RiderName {
-    width: 20em;
+    width: 15em;
 }
 
 
 body, input, select		{ 
     font-family: Verdana, Arial, Helvetica, sans-serif; 
-    font-size: calc(18pt + 1vmin);  
+    font-size: calc(14pt + 1vmin);  
     background-color: var(--regular-background) 
 }
 
@@ -124,4 +124,20 @@ header  {
 
 .hide   {
     display: none;
+}
+
+.odoline .StartTime:not(:empty)::after  {
+    content:  " \2192 ";
+}
+
+.odoline .FinishTime:not(:empty)::after  {
+    content:  " \003D ";
+}
+
+.odoline .OdoMiles   {
+    font-size: smaller;
+}
+
+.odoline .OdoMiles:not(:empty)::before   {
+    content:  " miles: ";
 }

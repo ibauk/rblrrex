@@ -2,6 +2,7 @@
 
 const K2M = 1.609;
 
+const MyStackItem = 'odoStack';
 var timertick;
 
 function oi(obj) {
@@ -31,6 +32,7 @@ function findChild(el,cls) {
 function oc(obj) {
 
     let line = findAncestor(obj,'odoline');
+
     let odostart = findChild(line,'OdoRallyStart');
     let odofinish = findChild(line,'OdoRallyFinish');
     let odokms = findChild(line,'odokms');
@@ -38,9 +40,71 @@ function oc(obj) {
     if (odokms.value == 'K') {
         odomiles = Math.floor(odomiles / K2M);
     }
-    let omobj = findChild(line,'OdoMiles');
-    omobj.innerText = ""+odomiles;
+    if (odomiles > 0) {
+        let omobj = findChild(line,'OdoMiles');
+        omobj.innerText = ""+odomiles;
+    }
+    let st = document.getElementById('starttime');
+
+    let osobj = findChild(line,'StartTime');
+    if (osobj && osobj.getAttribute('data-time') == '' && odostart.value != '') {
+        osobj.setAttribute('data-time',st.value);
+        osobj.innerText = st.value.substring(11);
+    }
+    obj.classList.remove('oi');
+    obj.classList.add('oc');
+
+    // Now update the database
+    let eid = findChild(line,'EntrantID');
+
+    let url = "/acor?eid="+eid.value+"&sod="+odostart.value+"&omk="+odokms.value+"&sti="+st.value;
+    let newTrans = {};
+    newTrans.url = url;
+    newTrans.obj = obj.id;
+    newTrans.sent = false;
+    const stackx = sessionStorage.getItem(MyStackItem);
+    let stack = [];
+    if (stackx != null) 
+        stack = JSON.parse(stackx);
+    stack.push(newTrans);
+    sessionStorage.setItem(MyStackItem,JSON.stringify(stack));
+
 }
+
+function sendTransactions() {
+
+    let stackx = sessionStorage.getItem(MyStackItem);
+    if (stackx == null) return;
+
+    let stack = JSON.parse(stackx);
+
+    let N = stack.length;
+
+    if (N < 1) return;
+
+    for (let i = 0; i < N; i++) {
+        
+        if (stack[i].sent) continue;
+
+        console.log(stack[i].url);
+        fetch(stack[i].url,{method: "POST"})
+        .then(res => res.json())
+        .then(function (res) {
+            console.log(res.res);
+            if (res.res=="ok") {
+                stack[i].sent = true;
+                sessionStorage.setItem(MyStackItem,JSON.stringify(stack));
+                document.getElementById(stack[i].obj).classList.replace('oc','ok');
+        } else {
+                //showerrormsg(res.res);
+            }
+        });
+
+    }
+
+}
+
+
 
 function clickTime() {
     let timeDisplay = document.querySelector('#timenow');
@@ -70,7 +134,7 @@ function refreshTime() {
 
 function nextSlotTime(timeslot) {
 
-    const slotinterval = 10;
+    let slotinterval = document.getElementById('cfgStartSlotIntervalMins').value;
 
     let m = parseInt(timeslot.substring(14)) + 1;
     let h = parseInt(timeslot.substring(11,13));
@@ -84,29 +148,28 @@ function nextSlotTime(timeslot) {
     return timeslot.substring(0,11)+t2(h)+':'+t2(ms);
 }
 
+// This keeps the starting slot in line with the current time
 function checkStartSlot() {
 
-
-    const MaxOptions = 5;
+    let MaxOptions = document.getElementById('cfgStartSlots2Show').value;   // Generate this number of options
 
     let st = document.getElementById('starttime');
     if (!st) return;
 
-    let dt = new Date();
-    //let tn = dt.toISOString().substring(0,16);
-    let tn = st.value.substring(0,10)+'T'+dt.toLocaleString('en-GB',{hour:"2-digit",minute:"2-digit"});
-    console.log('tn is '+tn);
-    let oldslot = new Date(st.value);
-    console.log('old slot was '+oldslot.toISOString());
-    if (tn <= st.value) return;
-    console.log('Timenow is '+tn);
+    let dt = new Date();    // Get the current time
+    let date = st.options[0].value.substring(0,10);
+    let tn = date+'T'+dt.toLocaleString('en-GB',{hour:"2-digit",minute:"2-digit"});
+
+    // Compare the first option, not the selected one. Need to remove old options even if unused.
+    if (tn <= st.options[0].value) return;
+
     let nextslot = nextSlotTime(tn);
 
     while (st.options.length != 0)
         st.options.remove(st.options.length - 1);
 
     let i = 0;
-    while (i++ <= MaxOptions) {
+    while (i++ < MaxOptions) {
         let opt = document.createElement('option');
         opt.value = nextslot;
         opt.innerHTML = nextslot.substring(11,16);
@@ -122,6 +185,8 @@ function t2(n) {
         return '0'+n;
     return n;
 }
+
+// This formats a date/time into the format used in a ScoreMaster database
 function getRallyDateTime(D) {
 
     let yy = D.getFullYear();
@@ -131,3 +196,6 @@ function getRallyDateTime(D) {
     let mm = D.getMinutes();
     return yy+'-'+t2(mt)+'-'+t2(dy)+'T'+t2(hh)+':'+t2(mm);
 }
+
+sessionStorage.removeItem(MyStackItem);
+setInterval(sendTransactions,1000);

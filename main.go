@@ -14,6 +14,7 @@ import (
 	_ "embed"
 
 	_ "github.com/mattn/go-sqlite3"
+	yaml "gopkg.in/yaml.v2"
 )
 
 const apptitle = "RBLRRex v0.1"
@@ -23,26 +24,139 @@ var httpPort = flag.String("port", "8079", "Serve on this port")
 
 const baseConfig = `
 StartSlotIntervalMins: 10
-#`
+StartSlots2Show: 3
+PauseClockMins: 2
+
+CheckoutStatusCodes: [DNS,Registered,Started,Finished]
+DontRestartCodes: [Started,Finished,DNF]
+`
+
+// Entrant status codes, ScoreMaster plus extras
+var StatusCodes map[string]int
 
 var CFG struct {
-	StartSlotIntervalMins int `yaml:"StartSlotIntervalMins"`
+	StartSlotIntervalMins int      `yaml:"StartSlotIntervalMins"`
+	StartSlots2Show       int      `yaml:"StartSlots2Show"`
+	PauseClockMins        int      `yaml:"PauseClockMins"`
+	CheckoutStatusCodes   []string `yaml:"CheckoutStatusCodes"`
+	DontRestartCodes      []string `yaml:"DontRestartCodes"`
 }
 var DBH *sql.DB
+
+func init() {
+
+	file := strings.NewReader(baseConfig)
+	D := yaml.NewDecoder(file)
+	D.Decode(&CFG)
+
+	StatusCodes = make(map[string]int)
+
+	StatusCodes["DNS"] = 0        // Signed-up on web
+	StatusCodes["Registered"] = 1 // Registered at Squires
+	StatusCodes["Started"] = 2    // Checked-out by staff
+	StatusCodes["Finished"] = 8   // Checked-in on time
+	StatusCodes["Late"] = 9       // Checked-in > 24 hours
+	StatusCodes["DNF"] = 3        // Ride abandoned
+
+}
+
+func checkerr(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func DBExec(sqlx string) sql.Result {
+
+	res, err := DBH.Exec(sqlx)
+	if err != nil {
+		fmt.Printf("DBExec = %v\n", sqlx)
+		panic(err)
+	}
+	return res
+
+}
+
+func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
+
+	r.ParseForm()
+
+	entrantid := r.FormValue("eid")
+	startodo := r.FormValue("sod")
+	odounit := r.FormValue("omk")
+	starttime := r.FormValue("sti")
+	if entrantid == "" || odounit == "" || starttime == "" {
+		fmt.Fprintf(w, `{"res":"Blank field"`)
+		fmt.Fprintf(w, `,"entrantid":"%v"`, entrantid)
+		fmt.Fprintf(w, `,"startodo":"%v"`, startodo)
+		fmt.Fprintf(w, `,"odounit":"%v"`, odounit)
+		fmt.Fprintf(w, `,"starttime":"%v"`, starttime)
+		fmt.Fprint(w, `}`)
+		return
+	}
+	odokms := "0"
+	if odounit == "K" {
+		odokms = "1"
+	}
+	var nrex int64 = 0
+	var err error
+	if startodo != "" {
+		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(StatusCodes["Started"])
+		sqlx += ",OdoRallyStart=" + startodo
+		sqlx += ",OdoKms=" + odokms
+		sqlx += ",StartTime='" + starttime + "'"
+		sqlx += " WHERE EntrantID=" + entrantid
+		if len(CFG.DontRestartCodes) > 0 {
+			sqlx += " AND (EntrantStatus NOT IN ("
+			x := ""
+			for _, sc := range CFG.DontRestartCodes {
+				if x != "" {
+					x += ","
+				}
+				x += strconv.Itoa(StatusCodes[sc])
+			}
+			sqlx += x + ")"
+			sqlx += " OR StartTime IS NULL)"
+		}
+		res := DBExec(sqlx)
+		nrex, err = res.RowsAffected()
+		checkerr(err)
+	} else {
+		nrex = 0
+	}
+
+	if nrex < 1 {
+		sqlx := "UPDATE entrants SET OdoKms=" + odokms
+		if startodo != "" {
+			sqlx += ",OdoRallyStart=" + startodo
+			sqlx += ",EntrantStatus=" + strconv.Itoa(StatusCodes["Started"])
+		}
+		sqlx += " WHERE EntrantID=" + entrantid
+		res := DBExec(sqlx)
+		n, err := res.RowsAffected()
+		checkerr(err)
+		if n < 1 {
+			fmt.Fprint(w, `{"res":"Database operation failed!"}`)
+			return
+		}
+	}
+	fmt.Fprint(w, `{"res":"ok"}`)
+}
 
 func main() {
 
 	var err error
 	flag.Parse()
+
 	DBH, err = sql.Open("sqlite3", *path2db)
 	if err != nil {
 		fmt.Printf("%v: Can't access database %v [%v] run aborted\n", apptitle, path2db, err)
 		os.Exit(1)
 	}
 	defer DBH.Close()
-	fmt.Println(baseConfig)
 
-	http.HandleFunc("/", show_odos)
+	http.HandleFunc("/", show_checkout)
+	http.HandleFunc("/acor", ajax_checkoutRider)
 	err = http.ListenAndServe(":"+*httpPort, nil)
 	if err != nil {
 		panic(err)
@@ -50,7 +164,32 @@ func main() {
 
 }
 
-func show_odos(w http.ResponseWriter, r *http.Request) {
+func next_slot(timeslot string) string {
+
+	m, _ := strconv.Atoi(timeslot[14:])
+	m++
+	h, _ := strconv.Atoi(timeslot[11:13])
+	ns := m / CFG.StartSlotIntervalMins
+	ns++
+	ms := ns * CFG.StartSlotIntervalMins
+	if ms >= 60 {
+		h++
+		ms -= 60
+	}
+	return fmt.Sprintf("%v%02d:%02d", timeslot[0:11], h, ms)
+
+}
+
+func show_checkout(w http.ResponseWriter, r *http.Request) {
+
+	var show_codes []int
+	for i := 0; i < len(CFG.CheckoutStatusCodes); i++ {
+		show_codes = append(show_codes, StatusCodes[CFG.CheckoutStatusCodes[i]])
+	}
+	show_odos(w, r, true, show_codes)
+
+}
+func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_status []int) {
 
 	type odoParamsVar struct {
 		EntrantID      int
@@ -67,20 +206,22 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		FinishTime     string
 		FinishTimeISO  string
 		HoursMins      string
+		FinishReadOnly bool
+		StartReadOnly  bool
 	}
 	const odoline = `
 	<div class="odoline">
 		<div class="topline">
-			<span class="td EntrantID hide">{{.EntrantID}}</span>
+			<input type="hidden" class="td EntrantID hide" value="{{.EntrantID}}">
 			<span class="td RiderName"><strong>{{.RiderLast}}</strong>, {{.RiderFirst}}</span>
 			<span class="td odo">
-				<input type="number" class="bignumber OdoRallyStart" placeholder="start" value="{{.OdoRallyStart}}" oninput="oi(this);" onchange="oc(this);">
+				<input type="number" {{if .StartReadOnly}}disabled {{end}}class="bignumber OdoRallyStart" placeholder="start" value="{{.OdoRallyStart}}" oninput="oi(this);" onchange="oc(this);" id="sod{{.EntrantID}}">
 			</span>
 			<span class="td odo">
-				<input type="number" class="bignumber OdoRallyFinish" placeholder="finish" value="{{.OdoRallyFinish}}" oninput="oi(this);" onchange="oc(this);">
+				<input type="number" {{if .FinishReadOnly}}disabled {{end}}class="bignumber OdoRallyFinish" placeholder="finish" value="{{.OdoRallyFinish}}" oninput="oi(this);" onchange="oc(this);" id="fod{{.EntrantID}}">
 			</span>
 			<span class="td mk">
-				<select class="odokms" onchange="oc(this);">
+				<select class="odokms" onchange="oc(this);" id="omk{{.EntrantID}}">
 					<option value="M"{{if .OdoKms}}{{else}} selected{{end}}>M</option>
 					<option value="K"{{if .OdoKms}} selected{{end}}>K</option>
 				</select>
@@ -89,13 +230,27 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 		
 		<div class="bottomline">
 		<span class="blspacer"> </span>
-		<span class="td timeonly" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}} &#8594; {{end}}</span>
-		<span class="td timeonly" data-time="{{.FinishTimeISO}}">{{if .Finished}}{{.FinishTime}} = {{end}}</span>
+		<span class="td timeonly StartTime" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}}{{end}}</span>
+		<span class="td timeonly FinishTime" data-time="{{.FinishTimeISO}}">{{if .Finished}}{{.FinishTime}}{{end}}</span>
 		<span class="td timeonly">{{if .Finished}}{{.HoursMins}}{{end}}</span>
-		<span class="td">{{if .Finished}}Odo miles: {{end}}<span class="OdoMiles">{{if .Finished}}{{.OdoMiles}}{{end}}</span>
+		<span class="td"><span class="OdoMiles">{{if .Finished}}{{.OdoMiles}}{{end}}</span>
 		</div>
 	</div>
 	`
+
+	msecs2pause := CFG.PauseClockMins * 60000
+
+	rows, err := DBH.Query("SELECT StartTime FROM rallyparams")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	startingslot := time.Now().Format("2006-01-02T15:04")
+	if rows.Next() {
+		rows.Scan(&startingslot)
+	}
+	rows.Close()
+
 	var cohdr = `
 	<div class="topbar">
 	<header>
@@ -103,17 +258,24 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 	<span class="starttime">
 		<select id="starttime" class="st">
-			<option value="2023-06-13T05:00" selected>05:00</option>
-			<option value="2023-06-13T05:10">05:10</option>
+			##OPTS##
 		</select>
 	</span>
 	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-	<span id="timenow" class="smalltime" data-time="" data-refresh="1000" data-pause="120000" data-paused="0" onclick="clickTime();">
+	<span id="timenow" class="smalltime" data-time="" data-refresh="1000" data-pause="` + strconv.Itoa(msecs2pause) + `" data-paused="0" onclick="clickTime();">
 
 	</span>
 	</header>
 	</div>
 	`
+	opts := ""
+	sel := " selected"
+	for i := 0; i < CFG.StartSlots2Show; i++ {
+		opts += `<option value="` + startingslot + `"` + sel + `>` + startingslot[11:16] + `</option>`
+		sel = ""
+		startingslot = next_slot(startingslot)
+	}
+	cohdr = strings.ReplaceAll(cohdr, "##OPTS##", opts)
 
 	sqlx := "SELECT trim(substr(RiderName,1,RiderPos-1)) AS RiderFirst"
 	sqlx += ",trim(substr(RiderName,RiderPos+1)) AS RiderLast"
@@ -126,22 +288,33 @@ func show_odos(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
-	rows, err := DBH.Query(sqlx)
+	rows, err = DBH.Query(sqlx)
 	if err != nil {
 		panic(err)
 	}
+	defer rows.Close()
 	start_html(w, r)
-	fmt.Fprint(w, cohdr)
+	if check_out {
+		fmt.Fprint(w, cohdr)
+	}
 	fmt.Fprint(w, `<div class="table">`)
 
-	const validEntrantStatus = 8
 	const K2M = 1.609
 
 	var start, finish, odokms, EntrantStatus int
 	for rows.Next() {
 		var odoParams odoParamsVar
+		odoParams.FinishReadOnly = check_out
+		odoParams.StartReadOnly = !check_out
 		rows.Scan(&odoParams.RiderFirst, &odoParams.RiderLast, &odoParams.EntrantID, &start, &finish, &odokms, &odoParams.StartTimeISO, &EntrantStatus, &odoParams.FinishTimeISO)
-		if EntrantStatus != validEntrantStatus {
+		ok := false
+		for i := 0; i < len(show_status); i++ {
+			if EntrantStatus == show_status[i] {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			continue
 		}
 		odoParams.OdoKms = odokms == 1
@@ -209,7 +382,11 @@ func start_html(w http.ResponseWriter, r *http.Request) {
 	</style>
 	<script>` + js_main + `</script>
 	</head>
-	<body>`
+	<body>
+	<input type="hidden" id="cfgStartSlotIntervalMins" value="` + strconv.Itoa(CFG.StartSlotIntervalMins) + `">
+	<input type="hidden" id="cfgStartSlots2Show" value="` + strconv.Itoa(CFG.StartSlots2Show) + `">
+	<input type="hidden" id="cfgPauseClockMins" value="` + strconv.Itoa(CFG.PauseClockMins) + `">
+	`
 
 	fmt.Fprint(w, shtml)
 }
