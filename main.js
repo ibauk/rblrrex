@@ -15,10 +15,12 @@ function findAncestor (el,cls) {
 }
 
 function findChild(el,cls) {
+//    console.log("findChild "+cls+" ?");
     let kids = el.children.length;
     if (kids < 1) return null;
     for (let i = 0; i < el.children.length; i++) {
-        if (el.children[i].classList.contains(cls)) {
+//        console.log('cl=='+JSON.stringify(el.children[i].classList));
+        if (el.children[i].classList?.contains(cls)) {
           return el.children[i];
         }
         let res = findChild(el.children[i],cls);
@@ -29,7 +31,26 @@ function findChild(el,cls) {
     return null;
 }
 
+function getHoursMins(stiso,ftiso) {
+
+    const minsdiv = 60000; // Number of milliseconds in a minute
+
+    let st = new Date(stiso);
+    let ft = new Date(ftiso);
+    let diff = ft.getTime() - st.getTime();
+    let mins = Math.floor(diff / minsdiv);
+    let hrs = Math.floor(mins / 60);
+    mins = mins - (hrs * 60);
+    return t2(hrs)+'h'+t2(mins);
+}
+
 function oc(obj) {
+
+    let checkio = document.getElementById('checkio');
+    if (!checkio) return;
+
+    console.log('Checking '+JSON.stringify(checkio));
+    // Now we're dealing with check-in & check-out
 
     let line = findAncestor(obj,'odoline');
 
@@ -44,20 +65,50 @@ function oc(obj) {
         let omobj = findChild(line,'OdoMiles');
         omobj.innerText = ""+odomiles;
     }
+    console.log('Getting starttime');
     let st = document.getElementById('starttime');
-
+    let tn = document.getElementById('timenow').getAttribute('data-time');
+    console.log('tn=='+JSON.stringify(tn));
     let osobj = findChild(line,'StartTime');
+    if (checkio.value == 'I') {
+        console.log('Setting st');
+        st = osobj.getAttribute('data-time');
+        let sml = document.getElementById('SaneMilesLimit');
+        if (sml) {
+            if (odomiles < 0 || odomiles > sml.value) {
+                console.log('Duff miles');
+                odostart.disabled = false;
+            }
+        }
+    } else {
+        console.log('Getting st.value == '+JSON.stringify(osobj));
+        st = st.value;
+    }
+    console.log('checkio=='+checkio+' st=='+st+'  tn=='+tn);
     if (osobj && osobj.getAttribute('data-time') == '' && odostart.value != '') {
-        osobj.setAttribute('data-time',st.value);
+        osobj.setAttribute('data-time',st);
         osobj.innerText = st.value.substring(11);
     }
+    let ofobj = findChild(line,'FinishTime');
+    if (ofobj && ofobj.getAttribute('data-time') == '' && odofinish.value != '') {
+        ofobj.setAttribute('data-time',tn);
+        ofobj.innerText = tn.substring(11);
+        let omhobj = findChild(line,'HoursMins');
+        omhobj.innerText = getHoursMins(st,tn);
+    }
+
     obj.classList.remove('oi');
     obj.classList.add('oc');
 
     // Now update the database
     let eid = findChild(line,'EntrantID');
 
-    let url = "/acor?eid="+eid.value+"&sod="+odostart.value+"&omk="+odokms.value+"&sti="+st.value;
+    let url = '';
+    if (checkio.value =='I') {
+        url = "/acir?eid="+eid.value+"&fod="+odofinish.value+"&sod="+odostart.value+"&omk="+odokms.value+"&fti="+tn;
+    } else {
+        url = "/acor?eid="+eid.value+"&sod="+odostart.value+"&omk="+odokms.value+"&sti="+st;
+    }
     let newTrans = {};
     newTrans.url = url;
     newTrans.obj = obj.id;

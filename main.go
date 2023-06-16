@@ -23,12 +23,21 @@ var path2db = flag.String("db", `\sm-installs\rblr23\rex.db`, "Path to database"
 var httpPort = flag.String("port", "8079", "Serve on this port")
 
 const baseConfig = `
+
 StartSlotIntervalMins: 10
+
 StartSlots2Show: 3
+
 PauseClockMins: 2
 
+CheckinStatusCodes: [Started,Finished]
+
 CheckoutStatusCodes: [DNS,Registered,Started,Finished]
+
 DontRestartCodes: [Started,Finished,DNF]
+
+SaneMilesLimit: 1600 # If odo readings give more than this value, one of them is probably wrong
+
 `
 
 // Entrant status codes, ScoreMaster plus extras
@@ -38,8 +47,10 @@ var CFG struct {
 	StartSlotIntervalMins int      `yaml:"StartSlotIntervalMins"`
 	StartSlots2Show       int      `yaml:"StartSlots2Show"`
 	PauseClockMins        int      `yaml:"PauseClockMins"`
+	CheckinStatusCodes    []string `yaml:"CheckinStatusCodes"`
 	CheckoutStatusCodes   []string `yaml:"CheckoutStatusCodes"`
 	DontRestartCodes      []string `yaml:"DontRestartCodes"`
+	SaneMilesLimit        int      `yaml:"SaneMilesLimit"`
 }
 var DBH *sql.DB
 
@@ -75,6 +86,75 @@ func DBExec(sqlx string) sql.Result {
 	}
 	return res
 
+}
+
+func ajax_checkinRider(w http.ResponseWriter, r *http.Request) {
+
+	r.ParseForm()
+
+	entrantid := r.FormValue("eid")
+	finishodo := r.FormValue("fod")
+	startodo := r.FormValue("sod")
+	odounit := r.FormValue("omk")
+	finishtime := r.FormValue("fti")
+	if entrantid == "" || odounit == "" || finishtime == "" {
+		fmt.Fprintf(w, `{"res":"Blank field"`)
+		fmt.Fprintf(w, `,"entrantid":"%v"`, entrantid)
+		fmt.Fprintf(w, `,"finishodo":"%v"`, finishodo)
+		fmt.Fprintf(w, `,"odounit":"%v"`, odounit)
+		fmt.Fprintf(w, `,"finishtime":"%v"`, finishtime)
+		fmt.Fprint(w, `}`)
+		return
+	}
+	odokms := "0"
+	if odounit == "K" {
+		odokms = "1"
+	}
+	var nrex int64 = 0
+	var err error
+	if finishodo != "" {
+		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(StatusCodes["Finished"])
+		sqlx += ",OdoRallyStart=" + startodo
+		sqlx += ",OdoRallyFinish=" + finishodo
+		sqlx += ",OdoKms=" + odokms
+		sqlx += ",FinishTime='" + finishtime + "'"
+		sqlx += " WHERE EntrantID=" + entrantid
+		if len(CFG.DontRestartCodes) > 0 {
+			sqlx += " AND (EntrantStatus NOT IN ("
+			x := ""
+			for _, sc := range CFG.DontRestartCodes {
+				if x != "" {
+					x += ","
+				}
+				x += strconv.Itoa(StatusCodes[sc])
+			}
+			sqlx += x + ")"
+			sqlx += " OR FinishTime IS NULL OR FinishTime='')"
+		}
+		res := DBExec(sqlx)
+		nrex, err = res.RowsAffected()
+		checkerr(err)
+	} else {
+		nrex = 0
+	}
+
+	if nrex < 1 {
+		sqlx := "UPDATE entrants SET OdoKms=" + odokms
+		if finishodo != "" {
+			sqlx += ",OdoRallyFinish=" + finishodo
+			sqlx += ",OdoRallyStart=" + startodo
+			sqlx += ",EntrantStatus=" + strconv.Itoa(StatusCodes["Finished"])
+		}
+		sqlx += " WHERE EntrantID=" + entrantid
+		res := DBExec(sqlx)
+		n, err := res.RowsAffected()
+		checkerr(err)
+		if n < 1 {
+			fmt.Fprint(w, `{"res":"Database operation failed!"}`)
+			return
+		}
+	}
+	fmt.Fprint(w, `{"res":"ok"}`)
 }
 
 func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +196,7 @@ func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
 				x += strconv.Itoa(StatusCodes[sc])
 			}
 			sqlx += x + ")"
-			sqlx += " OR StartTime IS NULL)"
+			sqlx += " OR StartTime IS NULL OR StartTime='')"
 		}
 		res := DBExec(sqlx)
 		nrex, err = res.RowsAffected()
@@ -155,8 +235,12 @@ func main() {
 	}
 	defer DBH.Close()
 
-	http.HandleFunc("/", show_checkout)
+	http.HandleFunc("/co", show_checkout)
+	http.HandleFunc("/ci", show_checkin)
+	http.HandleFunc("/acir", ajax_checkinRider)
 	http.HandleFunc("/acor", ajax_checkoutRider)
+	http.HandleFunc("/menu", show_menu)
+	http.HandleFunc("/", show_menu)
 	err = http.ListenAndServe(":"+*httpPort, nil)
 	if err != nil {
 		panic(err)
@@ -180,8 +264,29 @@ func next_slot(timeslot string) string {
 
 }
 
+func show_menu(w http.ResponseWriter, r *http.Request) {
+
+	start_html(w, r)
+	fmt.Fprint(w, `<header><a href="/menu">&#9776;</a></header>`)
+	fmt.Fprint(w, `<main>`)
+	fmt.Fprint(w, `<ul>`)
+	fmt.Fprint(w, `<li><a href="/co">Check-out</a></li>`)
+	fmt.Fprint(w, `<li><a href="/ci">Check-in</a></li>`)
+	fmt.Fprint(w, `</ul>`)
+	fmt.Fprint(w, `</main>`)
+}
+func show_checkin(w http.ResponseWriter, r *http.Request) {
+
+	fmt.Println("DEBUG: show_checkin")
+	var show_codes []int
+	for i := 0; i < len(CFG.CheckinStatusCodes); i++ {
+		show_codes = append(show_codes, StatusCodes[CFG.CheckinStatusCodes[i]])
+	}
+	show_odos(w, r, false, show_codes)
+}
 func show_checkout(w http.ResponseWriter, r *http.Request) {
 
+	fmt.Println("DEBUG: show_checkout")
 	var show_codes []int
 	for i := 0; i < len(CFG.CheckoutStatusCodes); i++ {
 		show_codes = append(show_codes, StatusCodes[CFG.CheckoutStatusCodes[i]])
@@ -191,6 +296,7 @@ func show_checkout(w http.ResponseWriter, r *http.Request) {
 }
 func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_status []int) {
 
+	fmt.Printf("DEBUG: show_odos out=%v, codes=%v\n", check_out, show_status)
 	type odoParamsVar struct {
 		EntrantID      int
 		RiderFirst     string
@@ -208,6 +314,7 @@ func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_stat
 		HoursMins      string
 		FinishReadOnly bool
 		StartReadOnly  bool
+		EntrantStatus  int
 	}
 	const odoline = `
 	<div class="odoline">
@@ -232,7 +339,7 @@ func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_stat
 		<span class="blspacer"> </span>
 		<span class="td timeonly StartTime" data-time="{{.StartTimeISO}}">{{if .Started}}{{.StartTime}}{{end}}</span>
 		<span class="td timeonly FinishTime" data-time="{{.FinishTimeISO}}">{{if .Finished}}{{.FinishTime}}{{end}}</span>
-		<span class="td timeonly">{{if .Finished}}{{.HoursMins}}{{end}}</span>
+		<span class="td timeonly HoursMins">{{if .Finished}}{{.HoursMins}}{{end}}</span>
 		<span class="td"><span class="OdoMiles">{{if .Finished}}{{.OdoMiles}}{{end}}</span>
 		</div>
 	</div>
@@ -251,9 +358,25 @@ func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_stat
 	}
 	rows.Close()
 
-	var cohdr = `
+	var cihdr = `
+	<input type="hidden" id="checkio" value="I">
+	<input type="hidden" id="SaneMilesLimit" value="` + strconv.Itoa(CFG.SaneMilesLimit) + `">
 	<div class="topbar">
-	<header>
+	<header><a href="/menu">&#9776;</a>
+	<span class="functionlabel">CHECK-IN/FINISH </span>
+	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+	<span id="timenow" class="smalltime" data-time="" data-refresh="1000" data-pause="` + strconv.Itoa(msecs2pause) + `" data-paused="0" onclick="clickTime();">
+
+	</span>
+	</header>
+	</div>
+	`
+
+	var cohdr = `
+	<input type="hidden" id="checkio" value="O">
+	<input type="hidden" id="SaneMilesLimit" value="` + strconv.Itoa(CFG.SaneMilesLimit) + `">
+	<div class="topbar">
+	<header><a href="/menu">&#9776;</a>
 	<span class="functionlabel">CHECK-OUT/START </span>
 	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 	<span class="starttime">
@@ -296,23 +419,28 @@ func show_odos(w http.ResponseWriter, r *http.Request, check_out bool, show_stat
 	start_html(w, r)
 	if check_out {
 		fmt.Fprint(w, cohdr)
+	} else {
+		fmt.Fprint(w, cihdr)
 	}
 	fmt.Fprint(w, `<div class="table">`)
 
 	const K2M = 1.609
 
-	var start, finish, odokms, EntrantStatus int
+	var start, finish, odokms int
 	for rows.Next() {
 		var odoParams odoParamsVar
 		odoParams.FinishReadOnly = check_out
 		odoParams.StartReadOnly = !check_out
-		rows.Scan(&odoParams.RiderFirst, &odoParams.RiderLast, &odoParams.EntrantID, &start, &finish, &odokms, &odoParams.StartTimeISO, &EntrantStatus, &odoParams.FinishTimeISO)
+		rows.Scan(&odoParams.RiderFirst, &odoParams.RiderLast, &odoParams.EntrantID, &start, &finish, &odokms, &odoParams.StartTimeISO, &odoParams.EntrantStatus, &odoParams.FinishTimeISO)
 		ok := false
 		for i := 0; i < len(show_status); i++ {
-			if EntrantStatus == show_status[i] {
+			if odoParams.EntrantStatus == show_status[i] {
 				ok = true
 				break
 			}
+		}
+		if odoParams.EntrantID == 127 {
+			fmt.Printf("DEBUG: Entrant %v (%v %v) has status %v and ok=%v\n", odoParams.EntrantID, odoParams.RiderFirst, odoParams.RiderLast, odoParams.EntrantStatus, ok)
 		}
 		if !ok {
 			continue
