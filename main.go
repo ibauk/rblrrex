@@ -24,33 +24,62 @@ var httpPort = flag.String("port", "8079", "Serve on this port")
 
 const baseConfig = `
 
+#######################       DO NOT USE TABS ANYWHERE IN THIS YAML DOCUMENT !!!
+
 StartSlotIntervalMins: 10
 
 StartSlots2Show: 3
 
 PauseClockMins: 2
 
-CheckinStatusCodes: [Started,Finished]
+# If the stats screen is showing, it'll auto-refresh after this number of seconds
+RefreshStatsIntervalSecs: 60
 
-CheckoutStatusCodes: [DNS,Registered,Started,Finished]
+# If odo readings give more than this value, one of them is probably wrong
+SaneMilesLimit: 1600 
 
-DontRestartCodes: [Started,Finished,DNF]
 
-SaneMilesLimit: 1600 # If odo readings give more than this value, one of them is probably wrong
+# If you mess with the keys used here, you'll need to fix them elsewhere
+# Code values 0, 1, 3 & 8 have specific meanings in ScoreMaster
+StatusCodes:
+  DNS:           {code: 0, title: 'Signed-up online, not seen at Squires'}
+  Registered:    {code: 1, title: 'Registered at Squires'}
+  CheckedOut:    {code: 2, title: 'Odo read, now out riding'}
+  CheckedIn:     {code: 4, title: 'Odo read, now checking receipts'}
+  Finisher:      {code: 8, title: 'Verified, within 24 hours'}
+  Certificate:   {code: 9, title: 'Verified, > 24 hours'}
+  DNF:           {code: 3, title: 'Ride abandoned, not returning'}
+
+
+CheckinStatusCodes: [CheckedOut,CheckedIn]
+
+CheckoutStatusCodes: [DNS,Registered,CheckedOut]
+
+
+# Don't update the start/finish times for any of these statuses
+DontRestartCodes: [CheckedOut,CheckedIn,Finisher,Certificate,DNF]
+
+# Present statistics for these statuses, in the order listed her
+RiderStatsList: [Registered,CheckedOut,CheckedIn,Finisher,Certificate,DNF,DNS]
 
 `
 
-// Entrant status codes, ScoreMaster plus extras
-var StatusCodes map[string]int
+type StatusDetails struct {
+	Code  int    `yaml:"code"`
+	Title string `yaml:"title"`
+}
 
 var CFG struct {
-	StartSlotIntervalMins int      `yaml:"StartSlotIntervalMins"`
-	StartSlots2Show       int      `yaml:"StartSlots2Show"`
-	PauseClockMins        int      `yaml:"PauseClockMins"`
-	CheckinStatusCodes    []string `yaml:"CheckinStatusCodes"`
-	CheckoutStatusCodes   []string `yaml:"CheckoutStatusCodes"`
-	DontRestartCodes      []string `yaml:"DontRestartCodes"`
-	SaneMilesLimit        int      `yaml:"SaneMilesLimit"`
+	StartSlotIntervalMins    int                      `yaml:"StartSlotIntervalMins"`
+	StartSlots2Show          int                      `yaml:"StartSlots2Show"`
+	PauseClockMins           int                      `yaml:"PauseClockMins"`
+	CheckinStatusCodes       []string                 `yaml:"CheckinStatusCodes"`
+	CheckoutStatusCodes      []string                 `yaml:"CheckoutStatusCodes"`
+	DontRestartCodes         []string                 `yaml:"DontRestartCodes"`
+	SaneMilesLimit           int                      `yaml:"SaneMilesLimit"`
+	RiderStatsList           []string                 `yaml:"RiderStatsList"`
+	StatusCodes              map[string]StatusDetails `yaml:"StatusCodes"`
+	RefreshStatsIntervalSecs int                      `yaml:"RefreshStatsIntervalSecs"`
 }
 var DBH *sql.DB
 
@@ -59,15 +88,6 @@ func init() {
 	file := strings.NewReader(baseConfig)
 	D := yaml.NewDecoder(file)
 	D.Decode(&CFG)
-
-	StatusCodes = make(map[string]int)
-
-	StatusCodes["DNS"] = 0        // Signed-up on web
-	StatusCodes["Registered"] = 1 // Registered at Squires
-	StatusCodes["Started"] = 2    // Checked-out by staff
-	StatusCodes["Finished"] = 8   // Checked-in on time
-	StatusCodes["Late"] = 9       // Checked-in > 24 hours
-	StatusCodes["DNF"] = 3        // Ride abandoned
 
 }
 
@@ -113,7 +133,7 @@ func ajax_checkinRider(w http.ResponseWriter, r *http.Request) {
 	var nrex int64 = 0
 	var err error
 	if finishodo != "" {
-		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(StatusCodes["Finished"])
+		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(CFG.StatusCodes["CheckedIn"].Code)
 		sqlx += ",OdoRallyStart=" + startodo
 		sqlx += ",OdoRallyFinish=" + finishodo
 		sqlx += ",OdoKms=" + odokms
@@ -126,7 +146,7 @@ func ajax_checkinRider(w http.ResponseWriter, r *http.Request) {
 				if x != "" {
 					x += ","
 				}
-				x += strconv.Itoa(StatusCodes[sc])
+				x += strconv.Itoa(CFG.StatusCodes[sc].Code)
 			}
 			sqlx += x + ")"
 			sqlx += " OR FinishTime IS NULL OR FinishTime='')"
@@ -143,7 +163,7 @@ func ajax_checkinRider(w http.ResponseWriter, r *http.Request) {
 		if finishodo != "" {
 			sqlx += ",OdoRallyFinish=" + finishodo
 			sqlx += ",OdoRallyStart=" + startodo
-			sqlx += ",EntrantStatus=" + strconv.Itoa(StatusCodes["Finished"])
+			sqlx += ",EntrantStatus=" + strconv.Itoa(CFG.StatusCodes["CheckedIn"].Code)
 		}
 		sqlx += " WHERE EntrantID=" + entrantid
 		res := DBExec(sqlx)
@@ -181,7 +201,7 @@ func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
 	var nrex int64 = 0
 	var err error
 	if startodo != "" {
-		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(StatusCodes["Started"])
+		sqlx := "UPDATE entrants SET EntrantStatus=" + strconv.Itoa(CFG.StatusCodes["Started"].Code)
 		sqlx += ",OdoRallyStart=" + startodo
 		sqlx += ",OdoKms=" + odokms
 		sqlx += ",StartTime='" + starttime + "'"
@@ -193,7 +213,7 @@ func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
 				if x != "" {
 					x += ","
 				}
-				x += strconv.Itoa(StatusCodes[sc])
+				x += strconv.Itoa(CFG.StatusCodes[sc].Code)
 			}
 			sqlx += x + ")"
 			sqlx += " OR StartTime IS NULL OR StartTime='')"
@@ -209,7 +229,7 @@ func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
 		sqlx := "UPDATE entrants SET OdoKms=" + odokms
 		if startodo != "" {
 			sqlx += ",OdoRallyStart=" + startodo
-			sqlx += ",EntrantStatus=" + strconv.Itoa(StatusCodes["Started"])
+			sqlx += ",EntrantStatus=" + strconv.Itoa(CFG.StatusCodes["Started"].Code)
 		}
 		sqlx += " WHERE EntrantID=" + entrantid
 		res := DBExec(sqlx)
@@ -221,6 +241,97 @@ func ajax_checkoutRider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fmt.Fprint(w, `{"res":"ok"}`)
+}
+
+func getIntegerFromDB(sqlx string, defx int) int {
+
+	rows, err := DBH.Query(sqlx)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var val int
+		rows.Scan(&val)
+		return val
+	}
+	return defx
+
+}
+func getStringFromDB(sqlx string, defx string) string {
+	rows, err := DBH.Query(sqlx)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var val string
+		rows.Scan(&val)
+		return val
+	}
+	return defx
+
+}
+func show_stats(w http.ResponseWriter, r *http.Request) {
+
+	var statshdr = `
+	<div class="topbar">
+	<header><a href="/menu">&#9776;</a>
+	<span class="functionlabel">CURRENT STATUS </span>
+	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+	<span id="timenow" class="smalltime" data-time="" data-refresh="1000"  data-paused="0" ></span>
+	</header>
+	</div>
+	`
+	var eventhdr = `
+	<div class="RiderStats">
+	<span class="header">%v - %v</span>
+	</div>
+	`
+
+	start_html(w, r)
+	fmt.Fprint(w, statshdr)
+	event := getStringFromDB("SELECT RallyTitle FROM rallyparams", "RBLR1000")
+	start := getStringFromDB("SELECT StartTime FROM rallyparams", "Today")
+	fmt.Fprintf(w, eventhdr, event, start[0:4])
+	fmt.Fprint(w, `<table class="RiderStats">`)
+
+	for _, sc := range CFG.RiderStatsList {
+
+		nRex := getIntegerFromDB("SELECT count(*) FROM entrants WHERE EntrantStatus="+strconv.Itoa(CFG.StatusCodes[sc].Code), 0)
+		fmt.Fprintf(w, `<tr><td  title="%v" class="Status">%v</td><td class="Count">%v</td></tr>`, CFG.StatusCodes[sc].Title, sc, nRex)
+	}
+	fmt.Fprint(w, `</table>`)
+
+	fmt.Fprint(w, `<script>refreshTime(); timertick = setInterval(refreshTime,1000);`)
+	fmt.Fprintf(w, `function refreshPage(){let url='%v';window.location.href=url;}setInterval(refreshPage,%v);`, "/stats", CFG.RefreshStatsIntervalSecs*1000)
+	fmt.Fprint(w, `</script>`)
+
+}
+
+func show_entrant_register(w http.ResponseWriter, r *http.Request) {
+
+	var entrantform = `
+	<div class="registerentrant">
+	{{.EntrantID}} {{.Rider.Fullname}} {{.Bike}}
+	</div>
+	`
+	r.ParseForm()
+	entrantid := r.FormValue("eid")
+	if entrantid == "" {
+		return
+	}
+	en, _ := strconv.Atoi(entrantid)
+	e := getEntrant(en)
+
+	start_html(w, r)
+
+	t, err := template.New("entrantform").Parse(entrantform)
+	if err != nil {
+		panic(err)
+	}
+	t.Execute(w, e)
+
 }
 
 func main() {
@@ -241,6 +352,8 @@ func main() {
 	http.HandleFunc("/acor", ajax_checkoutRider)
 	http.HandleFunc("/menu", show_menu)
 	http.HandleFunc("/", show_menu)
+	http.HandleFunc("/stats", show_stats)
+	http.HandleFunc("/sent", show_entrant_register)
 	err = http.ListenAndServe(":"+*httpPort, nil)
 	if err != nil {
 		panic(err)
@@ -272,6 +385,7 @@ func show_menu(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `<ul>`)
 	fmt.Fprint(w, `<li><a href="/co">Check-out</a></li>`)
 	fmt.Fprint(w, `<li><a href="/ci">Check-in</a></li>`)
+	fmt.Fprint(w, `<li><a href="/stats">Status</a></li>`)
 	fmt.Fprint(w, `</ul>`)
 	fmt.Fprint(w, `</main>`)
 }
@@ -280,7 +394,7 @@ func show_checkin(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("DEBUG: show_checkin")
 	var show_codes []int
 	for i := 0; i < len(CFG.CheckinStatusCodes); i++ {
-		show_codes = append(show_codes, StatusCodes[CFG.CheckinStatusCodes[i]])
+		show_codes = append(show_codes, CFG.StatusCodes[CFG.CheckinStatusCodes[i]].Code)
 	}
 	show_odos(w, r, false, show_codes)
 }
@@ -289,7 +403,7 @@ func show_checkout(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("DEBUG: show_checkout")
 	var show_codes []int
 	for i := 0; i < len(CFG.CheckoutStatusCodes); i++ {
-		show_codes = append(show_codes, StatusCodes[CFG.CheckoutStatusCodes[i]])
+		show_codes = append(show_codes, CFG.StatusCodes[CFG.CheckoutStatusCodes[i]].Code)
 	}
 	show_odos(w, r, true, show_codes)
 

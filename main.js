@@ -202,10 +202,11 @@ function nextSlotTime(timeslot) {
 // This keeps the starting slot in line with the current time
 function checkStartSlot() {
 
-    let MaxOptions = document.getElementById('cfgStartSlots2Show').value;   // Generate this number of options
-
     let st = document.getElementById('starttime');
     if (!st) return;
+
+    let MaxOptions = document.getElementById('cfgStartSlots2Show').value;   // Generate this number of options
+
 
     let dt = new Date();    // Get the current time
     let date = st.options[0].value.substring(0,10);

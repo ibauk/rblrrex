@@ -9,12 +9,13 @@ the IBAUK Rides database after the event.
 
 ## Records kept
 ### EntrantStatus
-- StatusCodes["DNS"] = 0        // Signed-up on web
-- StatusCodes["Registered"] = 1 // Registered at Squires
-- StatusCodes["Started"] = 2    // Checked-out by staff
-- StatusCodes["Finished"] = 8   // Checked-in on time
-- StatusCodes["Late"] = 9       // Checked-in > 24 hours
-- StatusCodes["DNF"] = 3        // Ride abandoned
+-  DNS:           {code: 0, title: 'Signed-up online, not seen at Squires'}
+-  Registered:    {code: 1, title: 'Registered at Squires'}
+-  CheckedOut:    {code: 2, title: 'Odo read, now out riding'}
+-  CheckedIn:     {code: 4, title: 'Odo read, now checking receipts'}
+-  Finisher:      {code: 8, title: 'Verified, within 24 hours'}
+-  Certificate:   {code: 9, title: 'Verified, > 24 hours'}
+-  DNF:           {code: 3, title: 'Ride abandoned, not returning'}
 
 
 ## At Squires
@@ -28,8 +29,20 @@ ready for riders to register for the ride.
 - Record new donations.
 - Collect signed disclaimer.
 - EntrantStatus changed to Registered.
+- If any details altered, certificate is pulled and marked for posting
 
 ### Check-out
 - Riders gather in carpark before the off.
 - Team pairs visit each bike to sign receipt logs and capture starting odos.
-- EntrantStatus changed to Started.
+- EntrantStatus changed to CheckedOut.
+
+### Check-in
+- Riders return to Squires
+- Team pairs visit each bike to sign receipt logs and capture final odos.
+- EntrantStatus changed to CheckedIn.
+
+### Verification
+- Riders sort out their paperwork.
+- Verifiers check receipts.
+- EntrantStatus changed to Finisher or Certificate.
+- Finishers receive unchanged certificate immediately.
